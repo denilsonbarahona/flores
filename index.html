@@ -21,7 +21,7 @@ a{color:#FFD23F}a:hover{color:#FFE88A}
 @keyframes drift{0%{transform:translate(0,0);opacity:0}15%{opacity:.9}100%{transform:translate(40px,-340px);opacity:0}}
 @keyframes heart{0%{transform:translate(-50%,-50%) scale(.3);opacity:1}100%{transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) scale(1.1) rotate(var(--rot));opacity:0}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-.dc-paused svg *,.dc-paused .dc-pollen span{animation-play-state:paused!important}
+.dc-paused .dc-stage *,.dc-paused .dc-pollen span{animation-play-state:paused!important}
 @keyframes rise{from{opacity:0;transform:translateY(24px) scale(.97)}to{opacity:1;transform:none}}
 </style>
 </helmet>
@@ -191,7 +191,7 @@ class Component extends DCLogic {
     this.setState(s => ({
       read: { ...s.read, [pid]: true },
       count: s.count + 1,
-      bursts: [...s.bursts, { id: bid, x, y }]
+      bursts: [...s.bursts, { id: bid, x, y, hearts: this.makeHearts() }]
     }));
     setTimeout(() => this.setState(s => ({ bursts: s.bursts.filter(b => b.id !== bid) })), 1600);
     clearTimeout(this.ot);
@@ -213,9 +213,12 @@ class Component extends DCLogic {
       grad('gA', '#D97800', '#FFD23F'), grad('gB', '#EE9A00', '#FFE066'), grad('gC', '#F5B000', '#FFEC8A'),
       grad('gRA', '#FFB627', '#FFF3B8'), grad('gRB', '#FFC640', '#FFF6C8'), grad('gRC', '#FFD45A', '#FFFADB'),
       grad('gLeaf', '#2E5520', '#6E9A3E'),
-      h('radialGradient', { key: 'disc', id: 'gDisc' }, h('stop', { offset: '0%', stopColor: '#A8621A' }), h('stop', { offset: '100%', stopColor: '#4E2A08' })),
-      h('radialGradient', { key: 'halo', id: 'gHalo' }, h('stop', { offset: '0%', stopColor: 'rgba(255,205,70,.34)' }), h('stop', { offset: '100%', stopColor: 'rgba(255,205,70,0)' }))
+      h('radialGradient', { key: 'disc', id: 'gDisc' }, h('stop', { offset: '0%', stopColor: '#A8621A' }), h('stop', { offset: '100%', stopColor: '#4E2A08' }))
     );
+    // Each flower = its own stem SVG + an HTML layer for the head, so the infinite
+    // `breathe` animation runs on the compositor instead of repainting the whole scene.
+    const pct = (v, of) => `${(v / of) * 100}%`;
+    const box = (cx, cy, s) => ({ position: 'absolute', left: pct(cx - s, W), top: pct(cy - s, H), width: pct(2 * s, W), height: pct(2 * s, H) });
     const els = flowers.map(f => {
       const stem = h('path', { key: 's', d: f.stem, fill: 'none', stroke: '#4B7A2E', strokeWidth: f.sw, strokeLinecap: 'round', pathLength: 1,
         style: { strokeDasharray: 1, strokeDashoffset: 1, animation: `grow ${f.stemDur}s cubic-bezier(.45,.1,.3,1) ${f.delay}s forwards` } });
@@ -250,16 +253,27 @@ class Component extends DCLogic {
         seeds.push(h('g', { key: b, style: { transformOrigin: '0 0', animation: `pop ${0.6 / sp}s ease-out ${f.head + (0.3 + b * 8 * 0.012) / sp}s both` } },
           h('path', { d: dark, fill: '#3A1F05' }), h('path', { d: light, fill: '#6B3B0C' })));
       }
-      const head = h('g', { key: 'h', transform: `translate(${f.fx},${f.cy})` },
-        h('circle', { r: f.R * 1.9, fill: 'url(#gHalo)', pointerEvents: 'none', style: { animation: `glowIn ${2.5 / sp}s ease ${f.head + 0.6 / sp}s both` } }),
-        h('g', { style: { transformOrigin: '0 0', animation: `breathe 6s ease-in-out ${f.head + 3 / sp}s infinite` } },
-          ...petals,
-          h('circle', { key: 'disc', r: D, fill: 'url(#gDisc)', style: { transformOrigin: '0 0', animation: `pop ${0.8 / sp}s ease-out ${f.head}s both` } }),
-          h('g', { key: 'seeds', pointerEvents: 'none' }, ...seeds)));
-      return h('g', { key: 'f' + f.id }, stem, ...leaves, head);
+      const HR = f.R * 1.9, S = f.R * 1.2;
+      const halo = h('div', { key: 'halo', style: { ...box(f.fx, f.cy, HR), pointerEvents: 'none', borderRadius: '50%',
+        background: 'radial-gradient(circle closest-side, rgba(255,205,70,.34), rgba(255,205,70,0))',
+        animation: `glowIn ${2.5 / sp}s ease ${f.head + 0.6 / sp}s both` } });
+      const head = h('div', { key: 'h', style: { ...box(f.fx, f.cy, S), pointerEvents: 'none', willChange: 'transform',
+        animation: `breathe 6s ease-in-out ${f.head + 3 / sp}s infinite` } },
+        h('svg', { viewBox: `${-S} ${-S} ${2 * S} ${2 * S}`, overflow: 'visible',
+          style: { position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' } },
+          h('g', { style: { pointerEvents: 'auto' } },
+            ...petals,
+            h('circle', { key: 'disc', r: D, fill: 'url(#gDisc)', style: { transformOrigin: '0 0', animation: `pop ${0.8 / sp}s ease-out ${f.head}s both` } }),
+            h('g', { key: 'seeds', pointerEvents: 'none' }, ...seeds))));
+      const stemSvg = h('svg', { key: 'st', viewBox: `0 0 ${W} ${H}`, overflow: 'visible',
+        style: { position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none' } }, stem, ...leaves);
+      return h(React.Fragment, { key: 'f' + f.id }, stemSvg, halo, head);
     });
-    const scene = h('svg', { key: 'run' + this.state.run, viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMax meet',
-      style: { position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' } }, defs, ...els);
+    // Stage reproduces viewBox + preserveAspectRatio="xMidYMax meet": fitted, centered, bottom-aligned.
+    const scene = h('div', { key: 'run' + this.state.run, className: 'dc-stage', style: { position: 'absolute', inset: 0, overflow: 'hidden' } },
+      h('svg', { width: 0, height: 0, style: { position: 'absolute' }, 'aria-hidden': true }, defs),
+      h('div', { style: { position: 'absolute', bottom: 0, left: 0, right: 0, margin: '0 auto',
+        width: `min(100%, ${100 * W / H}vh)`, aspectRatio: `${W} / ${H}` } }, ...els));
     this._sceneKey = sceneKey;
     this._scene = scene;
     return scene;
@@ -277,16 +291,22 @@ class Component extends DCLogic {
     return this._pollen;
   }
 
+  // Random values are fixed per burst so re-renders don't make hearts jump.
+  makeHearts() {
+    return Array.from({ length: 14 }, (_, i) => {
+      const a = (i / 14) * Math.PI * 2 + Math.random() * 0.4, dist = 50 + Math.random() * 70;
+      return { size: 12 + Math.random() * 14, dx: Math.cos(a) * dist, dy: Math.sin(a) * dist - 30, rot: (Math.random() - 0.5) * 90, dur: 1 + Math.random() * 0.5 };
+    });
+  }
+
   buildBursts() {
     const h = React.createElement;
     return h('div', { style: { position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 15 } },
-      ...this.state.bursts.map(b => h('div', { key: b.id }, ...Array.from({ length: 14 }, (_, i) => {
-        const a = (i / 14) * Math.PI * 2 + Math.random() * 0.4, dist = 50 + Math.random() * 70;
-        return h('span', { key: i, style: { position: 'absolute', left: b.x, top: b.y, fontSize: 12 + Math.random() * 14, lineHeight: 1,
+      ...this.state.bursts.map(b => h('div', { key: b.id }, ...b.hearts.map((t, i) =>
+        h('span', { key: i, style: { position: 'absolute', left: b.x, top: b.y, fontSize: t.size, lineHeight: 1,
           color: i % 3 ? '#FFD23F' : '#FF8A7A', textShadow: '0 0 10px rgba(255,200,80,.6)',
-          '--dx': `${Math.cos(a) * dist}px`, '--dy': `${Math.sin(a) * dist - 30}px`, '--rot': `${(Math.random() - 0.5) * 90}deg`,
-          animation: `heart ${1 + Math.random() * 0.5}s cubic-bezier(.2,.7,.3,1) both` } }, '♥');
-      }))));
+          '--dx': `${t.dx}px`, '--dy': `${t.dy}px`, '--rot': `${t.rot}deg`,
+          animation: `heart ${t.dur}s cubic-bezier(.2,.7,.3,1) both` } }, '♥')))));
   }
 
   renderVals() {
